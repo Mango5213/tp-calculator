@@ -10,26 +10,23 @@ import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
 import com.demo.tpcalculator.config.ConfigProperties;
-
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Default percentile calculation. Use an array to store the response time, the
- * index of array is exactly the response time or the response time within the
- * bucket. Use multi-thread to concurrent read files. Use sampling to reduce
- * calculation time.
+ * Default percentile calculation. Use an array to store the response time, the index of array is
+ * exactly the response time or the response time within the bucket. Use multi-thread to concurrent
+ * read files. Use sampling to reduce calculation time.
  * 
  * @author yue.su
  * @date 2019年2月24日
  */
 @Service
 @Slf4j
-public class DefaultPercentileCalculationService extends AbstractPercentileCalculationService<List<Long>> {
+public class DefaultPercentileCalculationService
+		extends AbstractPercentileCalculationService<List<Long>> {
 
 	@Autowired
 	private ConfigProperties configProperties;
@@ -51,6 +48,10 @@ public class DefaultPercentileCalculationService extends AbstractPercentileCalcu
 		log.info("start getting result, directory: [{}]", directory);
 		int bucketSize = configProperties.getBucketSize();
 		long count = fileService.countLogs(configProperties.getDirectory());
+		if (count == 0L) {
+			log.error("no valid logs, please check");
+			throw new RuntimeException("no valid logs, please check");
+		}
 		boolean enableSampling = false;
 		int sampleFrequency = 1;
 		// if log count is greater than 2 times of sampling threshold
@@ -61,13 +62,19 @@ public class DefaultPercentileCalculationService extends AbstractPercentileCalcu
 		}
 		List<Long> result = new ArrayList<>();
 		// concurrent read files
-		ExecutorService pool = Executors.newFixedThreadPool(configProperties.getDefaultConcurrency());
+		ExecutorService pool =
+				Executors.newFixedThreadPool(configProperties.getDefaultConcurrency());
 		try {
 			CompletionService<List<Long>> completionService = new ExecutorCompletionService<>(pool);
 			List<Path> paths = fileService.getAllFiles(directory);
+			if (paths == null || paths.isEmpty()) {
+				log.error("no files in directory: [{}], please check");
+				throw new RuntimeException("no files in directory");
+			}
 			int taskNum = 0;
 			for (Path path : paths) {
-				completionService.submit(new SingleFileCalculator(path, bucketSize, enableSampling, sampleFrequency));
+				completionService.submit(new SingleFileCalculator(path, bucketSize, enableSampling,
+						sampleFrequency));
 				taskNum++;
 			}
 			for (int i = 0; i < taskNum; i++) {
@@ -80,6 +87,7 @@ public class DefaultPercentileCalculationService extends AbstractPercentileCalcu
 			}
 		} catch (Exception e) {
 			log.error(e.getMessage(), e);
+			throw new RuntimeException(e.getMessage());
 		} finally {
 			pool.shutdown();
 		}
@@ -131,7 +139,8 @@ public class DefaultPercentileCalculationService extends AbstractPercentileCalcu
 		return rspTime;
 	}
 
-	private int approximteCalculatePercentile(int bucketSize, List<Long> result, long total, BigDecimal percentile) {
+	private int approximteCalculatePercentile(int bucketSize, List<Long> result, long total,
+			BigDecimal percentile) {
 		long percentileCount = new BigDecimal(total).multiply(percentile).longValue();
 		long lower = total;
 		int rspTime = 0;
@@ -149,7 +158,8 @@ public class DefaultPercentileCalculationService extends AbstractPercentileCalcu
 				// upper = lower+result.get(i)
 				// lower < percentileCount < upper
 				// assume response time is uniformly distributed within bucket
-				rspTime = (int) (i * bucketSize + (percentileCount - lower) * bucketSize / result.get(i)) - 1;
+				rspTime = (int) (i * bucketSize
+						+ (percentileCount - lower) * bucketSize / result.get(i)) - 1;
 				break;
 			}
 		}
@@ -183,7 +193,8 @@ public class DefaultPercentileCalculationService extends AbstractPercentileCalcu
 		private boolean enableSampling;
 		private int sampleFrequency;
 
-		public SingleFileCalculator(Path path, int bucketSize, boolean enableSampling, int sampleFrequency) {
+		public SingleFileCalculator(Path path, int bucketSize, boolean enableSampling,
+				int sampleFrequency) {
 			this.path = path;
 			this.bucketSize = bucketSize;
 			this.enableSampling = enableSampling;
